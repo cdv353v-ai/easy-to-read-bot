@@ -1,16 +1,21 @@
-require('dotenv').config();
+const fs = require('fs');
 const { Telegraf } = require('telegraf');
 const Anthropic = require('@anthropic-ai/sdk');
 const axios = require('axios');
+
+// Читаем токены из Secret Files на Render
+const BOT_TOKEN = fs.readFileSync('/etc/secrets/BOT_TOKEN', 'utf8').trim();
+const ANTHROPIC_API_KEY = fs.readFileSync('/etc/secrets/ANTHROPIC_API_KEY', 'utf8').trim();
+
+const bot = new Telegraf(BOT_TOKEN);
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `Ты — медицинский переводчик-интерпретатор. Протокол "Золотой стандарт v5.1".
 
 ТВОЯ ЗАДАЧА:
 Перевести медицинское заключение (анализы крови, МРТ, КТ, УЗИ, рентген) с португальского, английского, немецкого, испанского или французского на простой русский язык. Ответ всегда на русском.
 
-================================================================================
 СТРУКТУРА ОТВЕТА (строго в этом порядке):
-================================================================================
 
 1. **ЗАГОЛОВОК:** [Название исследования] ([Страна])
 
@@ -23,43 +28,28 @@ const SYSTEM_PROMPT = `Ты — медицинский переводчик-ин
 3. **ПЕРЕВОД И ПОЯСНЕНИЕ ТЕРМИНОВ:**
    - Только для показателей с отклонениями (ниже/выше нормы)
    - Для каждого отклонения строгий формат:
-
      **[Оригинал на языке документа]** — [Русский эквивалент]
      Что это значит: 2-3 предложения. Значение X — ниже/выше обычного показателя для здорового человека (Y)
-
      Где Y — только одна граница нормы (нижняя для сниженных, верхняя для повышенных)
-     НЕ пиши диапазон в скобках после сравнения
 
 4. **ИНФОРМАЦИОННАЯ СПРАВКА:**
    данный текст — перевод и расшифровка терминов. Он не заменяет консультацию врача и не является постановкой диагноза.
 
-================================================================================
 ЗАПРЕЩЕНО:
-================================================================================
 - Метафоры, аналогии, художественные сравнения
 - Диагнозы
-- Рекомендации по лечению, советы, указания к действию
+- Рекомендации по лечению
 - Канцеляризмы: вместо "референсные значения" пиши "обычные показатели для здорового человека"
-- Списки нормальных показателей (отдельный список не нужен)
 - Перечисление конкретных цифр в разделе "Общая картина"
 
-================================================================================
 ФОРМАТИРОВАНИЕ ДЛЯ TELEGRAM:
-================================================================================
-- Заголовки разделов выделяй **жирным** с двух сторон
+- Заголовки выделяй **жирным** с двух сторон
 - Пример: **ОБЩАЯ КАРТИНА:**
-- НЕ используй # или ## для заголовков
-- После заголовка ставь двоеточие и переходи на новую строку
+- НЕ используй # или ##
 
-================================================================================
-Если в документе нет отклонений — раздел "Перевод и пояснение терминов" пропускается.
-Если документ пустой (нет заполненных значений) — написать об этом в "Общей картине".
-================================================================================`;
+Если в документе нет отклонений — раздел "Перевод и пояснение терминов" пропускается.`;
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-const UNSUPPORTED_MSG = 'Отправьте медицинский документ — фото или PDF.';
+const UNSUPPORTED_MSG = 'Отправьте медицинский документ — текст, фото или PDF.';
 
 async function downloadFile(fileUrl) {
   const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
@@ -68,12 +58,12 @@ async function downloadFile(fileUrl) {
 
 async function getFileUrl(ctx, fileId) {
   const file = await ctx.telegram.getFile(fileId);
-  return `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+  return `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
 }
 
 async function callClaude(imageContent) {
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-3-haiku-20240307',
     max_tokens: 4096,
     system: SYSTEM_PROMPT,
     messages: [
@@ -86,8 +76,46 @@ async function callClaude(imageContent) {
   return response.content[0].text;
 }
 
+bot.start(async (ctx) => {
+  await ctx.reply(
+    `🧠 *Easy to Read*\n*Читай просто. Понимай легко.*\n\n` +
+    `Я перевожу медицинские заключения с PT/EN/DE/ES/FR на простой русский язык.\n\n` +
+    `Отправьте текст, фото или PDF заключения.`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// Обработка текста
+bot.on('text', async (ctx) => {
+  const userText = ctx.message.text;
+  if (userText.startsWith('/')) return;
+  
+  if (userText.length < 10) {
+    await ctx.reply('⚠️ Текст слишком короткий. Отправьте полное заключение.');
+    return;
+  }
+  
+  await ctx.reply('🔄 Интерпретирую...');
+  
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-3-haiku-20240307',
+      max_tokens: 2000,
+      temperature: 0.3,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userText }]
+    });
+    
+    await ctx.reply(response.content[0].text, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Error:', error);
+    await ctx.reply('❌ Ошибка. Попробуйте позже.');
+  }
+});
+
+// Обработка фото
 bot.on('photo', async (ctx) => {
-  const processingMsg = await ctx.reply('Обрабатываю документ...');
+  const processingMsg = await ctx.reply('📷 Обрабатываю фото...');
   try {
     const photos = ctx.message.photo;
     const largest = photos[photos.length - 1];
@@ -106,19 +134,20 @@ bot.on('photo', async (ctx) => {
       },
       {
         type: 'text',
-        text: 'Please transcribe and explain this medical document.',
+        text: 'Распознай текст на этом медицинском заключении и интерпретируй по протоколу.',
       },
     ]);
 
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
     await ctx.reply(result, { parse_mode: 'Markdown' });
   } catch (err) {
-    console.error('Photo handler error:', err);
+    console.error('Photo error:', err);
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
-    await ctx.reply('Произошла ошибка при обработке изображения. Попробуйте ещё раз.');
+    await ctx.reply('❌ Ошибка при обработке фото. Попробуйте ещё раз.');
   }
 });
 
+// Обработка PDF и документов
 bot.on('document', async (ctx) => {
   const doc = ctx.message.document;
   const mime = doc.mime_type || '';
@@ -127,67 +156,41 @@ bot.on('document', async (ctx) => {
   const isImage = mime.startsWith('image/');
 
   if (!isPdf && !isImage) {
-    return ctx.reply(UNSUPPORTED_MSG);
+    return ctx.reply('Поддерживаются только фото и PDF файлы.');
   }
 
-  const processingMsg = await ctx.reply('Обрабатываю документ...');
+  const processingMsg = await ctx.reply('📄 Обрабатываю документ...');
   try {
     const fileUrl = await getFileUrl(ctx, doc.file_id);
     const buffer = await downloadFile(fileUrl);
     const base64 = buffer.toString('base64');
 
-    let imageContent;
-
-    if (isPdf) {
-      imageContent = [
-        {
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: base64,
-          },
+    const result = await callClaude([
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mime,
+          data: base64,
         },
-        {
-          type: 'text',
-          text: 'Please transcribe and explain this medical document.',
-        },
-      ];
-    } else {
-      imageContent = [
-        {
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: mime,
-            data: base64,
-          },
-        },
-        {
-          type: 'text',
-          text: 'Please transcribe and explain this medical document.',
-        },
-      ];
-    }
-
-    const result = await callClaude(imageContent);
+      },
+      {
+        type: 'text',
+        text: 'Распознай текст на этом медицинском заключении и интерпретируй по протоколу.',
+      },
+    ]);
 
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
     await ctx.reply(result, { parse_mode: 'Markdown' });
   } catch (err) {
-    console.error('Document handler error:', err);
+    console.error('Document error:', err);
     await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
-    await ctx.reply('Произошла ошибка при обработке документа. Попробуйте ещё раз.');
+    await ctx.reply('❌ Ошибка при обработке документа. Попробуйте ещё раз.');
   }
 });
 
-bot.on('message', (ctx) => {
-  ctx.reply(UNSUPPORTED_MSG);
-});
-
-bot.launch().then(() => {
-  console.log('Bot is running...');
-});
+bot.launch();
+console.log('✅ Бот Easy to Read запущен!');
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
