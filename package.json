@@ -1,7 +1,7 @@
 {
-  "name": "easy-to-read-bot",
+  "name": "medical-bot",
   "version": "1.0.0",
-  "description": "Медицинский бот-интерпретатор",
+  "description": "Medical analysis interpreter",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,6 +10,7 @@
     "telegraf": "^4.16.3",
     "axios": "^1.6.7",
     "express": "^4.18.3",
-    "pdf-img-convert": "^1.2.1"
+    "pdf-img-convert": "^1.2.1",
+    "@anthropic-ai/sdk": "^0.20.0"
   }
 }
