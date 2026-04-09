@@ -2,9 +2,9 @@
   "name": "easy-to-read-bot",
   "version": "1.0.0",
   "description": "Медицинский бот-интерпретатор",
-  "main": "bot.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node main.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.33.0",
