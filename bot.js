@@ -4,19 +4,19 @@ const express = require('express');
 const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 
-// ─── Server (required for Railway/Render) ───────────────────────────────────
+// ─── Server ───────────────────────────────────────────────────────────────────
 const app = express();
+app.use(express.json());
 const PORT = process.env.PORT || 10000;
-app.get('/', (req, res) => res.send('Medical Bot is Online'));
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
 
-// ─── API clients ─────────────────────────────────────────────────────────────
+// ─── API clients ──────────────────────────────────────────────────────────────
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY.trim(),
 });
 const bot = new Telegraf(process.env.BOT_TOKEN);
+const WEBHOOK_URL = `${process.env.RENDER_URL}/webhook`;
 
-// ─── System prompt ───────────────────────────────────────────────────────────
+// ─── System prompt ────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are a highly qualified medical translator and assistant for the "Easy to Read" service.
 Your audience: Russian-speaking adults without medical training, under stress from unfamiliar terminology in a foreign country.
 One document — one complete response. No dialogue, no follow-up questions.
@@ -126,7 +126,6 @@ async function handleDocument(ctx, fileId, mimeType) {
     const base64 = buffer.toString('base64');
 
     let content;
-
     if (mimeType === 'application/pdf') {
       content = [
         {
@@ -146,11 +145,17 @@ async function handleDocument(ctx, fileId, mimeType) {
     }
 
     const result = await callClaude(content);
-    await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+    } catch (_) {}
+
     await ctx.reply(result, { parse_mode: 'Markdown' });
   } catch (err) {
     console.error('Handler error:', err);
-    await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
+    } catch (_) {}
     await ctx.reply('Произошла ошибка при обработке документа. Попробуйте ещё раз.');
   }
 }
@@ -176,7 +181,12 @@ bot.on('message', (ctx) => {
   ctx.reply('Отправьте медицинский документ — фото или PDF.');
 });
 
-// ─── Launch ───────────────────────────────────────────────────────────────────
-bot.launch().then(() => console.log('Bot is active'));
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+// ─── Webhook setup ────────────────────────────────────────────────────────────
+app.get('/', (req, res) => res.send('Medical Bot is Online'));
+app.use(bot.webhookCallback('/webhook'));
+
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`Сервер работает на порту ${PORT}`);
+  await bot.telegram.setWebhook(WEBHOOK_URL);
+  console.log(`Webhook установлен: ${WEBHOOK_URL}`);
+});
