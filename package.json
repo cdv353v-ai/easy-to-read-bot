@@ -2,15 +2,14 @@
   "name": "medical-bot",
   "version": "1.0.0",
   "description": "Medical analysis interpreter",
-  "main": "index.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3",
     "axios": "^1.6.7",
     "express": "^4.18.3",
-    "pdf-img-convert": "^1.2.1",
-    "@anthropic-ai/sdk": "^0.20.0"
+    "@anthropic-ai/sdk": "^0.39.0"
   }
 }
